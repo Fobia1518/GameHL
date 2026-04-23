@@ -3,10 +3,9 @@ import numpy as np
 
 def detect_highlight_events(video_path: str) -> list[float]:
     """
-    Detecta momentos de highlight en CS2 usando solo OpenCV:
-    - Kill feed: detecta el color naranja-rojizo del nombre propio
-    - Flashbang: pantalla con brillo extremo repentino
-    - Accion intensa: cambio brusco entre frames
+    Detecta highlights en CS2.
+    Detecta la aparicion del kill feed: banda oscura semitransparente
+    en la esquina superior derecha con texto blanco.
     """
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS)
@@ -16,22 +15,21 @@ def detect_highlight_events(video_path: str) -> list[float]:
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
     events = []
-    prev_gray        = None
-    prev_brightness  = None
     frame_idx        = 0
     last_event_frame = -999
-
-    cooldown_frames = int(fps * 8)  # 8 segundos de cooldown entre eventos
+    cooldown_frames  = int(fps * 8)
 
     # Zona kill feed: esquina superior derecha
-    kf_x = int(width * 0.68)
-    kf_y = int(height * 0.02)
+    # En 1024x768: aprox x=630, y=5, ancho=390, alto=80
+    kf_x = int(width * 0.72)
+    kf_y = int(height * 0.01)
     kf_w = width - kf_x
-    kf_h = int(height * 0.35)
+    kf_h = int(height * 0.08)
 
-    def add_event(ts):
+    def add_event(ts, reason):
         nonlocal last_event_frame
         if frame_idx - last_event_frame >= cooldown_frames:
+            print(f"[HIGHLIGHT] t={ts:.2f}s reason={reason}")
             events.append(round(ts, 2))
             last_event_frame = frame_idx
 
@@ -42,40 +40,22 @@ def detect_highlight_events(video_path: str) -> list[float]:
 
         ts = frame_idx / fps
 
-        # Analizar 1 de cada 3 frames para mayor velocidad
         if frame_idx % 3 == 0:
-
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
-            # --- Detector 1: Kill feed ---
             kill_zone = frame[kf_y:kf_y + kf_h, kf_x:kf_x + kf_w]
-            hsv = cv2.cvtColor(kill_zone, cv2.COLOR_BGR2HSV)
+            gray = cv2.cvtColor(kill_zone, cv2.COLOR_BGR2GRAY)
 
-            # Naranja rojizo exacto del nombre en CS2
-            lower = np.array([5,  180, 180])
-            upper = np.array([18, 255, 255])
-            mask  = cv2.inRange(hsv, lower, upper)
-            kill_pixels = cv2.countNonZero(mask)
+            # El kill feed tiene fondo muy oscuro (casi negro)
+            dark_pixels = cv2.countNonZero(cv2.threshold(gray, 40, 255, cv2.THRESH_BINARY_INV)[1])
+            total_pixels = kill_zone.shape[0] * kill_zone.shape[1]
+            dark_ratio = dark_pixels / total_pixels
 
-            if kill_pixels > 40:
-                add_event(ts)
+            # Y texto blanco encima
+            white_pixels = cv2.countNonZero(cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY)[1])
+            white_ratio = white_pixels / total_pixels
 
-            # --- Detector 2: Flashbang ---
-            brightness = float(np.mean(gray))
-            if prev_brightness is not None:
-                jump = brightness - prev_brightness
-                if jump > 55 and brightness > 175:
-                    add_event(ts)
-            prev_brightness = brightness
-
-            # --- Detector 3: Accion intensa ---
-            if prev_gray is not None:
-                diff  = cv2.absdiff(prev_gray, gray)
-                score = float(np.mean(diff))
-                if score > 50:
-                    add_event(ts)
-
-            prev_gray = gray
+            # Kill feed: mas del 40% oscuro y al menos 5% blanco (texto)
+            if dark_ratio > 0.05 and white_ratio > 0.02:
+                add_event(ts, "kill_feed")
 
         frame_idx += 1
 

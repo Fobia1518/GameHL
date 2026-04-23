@@ -46,12 +46,8 @@ def run_pipeline(job_id: str, input_path: str):
         db.commit()
 
         # Detectar eventos
-        audio_events     = detect_audio_peaks(input_path)
         highlight_events = detect_highlight_events(input_path)
-
-        # Unir, ordenar y deduplicar
-        all_events = sorted(set(audio_events + highlight_events))
-        merged     = merge_events(all_events, min_gap=8.0)
+        merged = merge_events(highlight_events, min_gap=8.0)
 
         # Eliminar clips que se solapan en el tiempo
         clean_events = remove_overlapping_clips(merged, before=BEFORE, after=AFTER)
